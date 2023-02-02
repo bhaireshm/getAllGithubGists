@@ -1,10 +1,10 @@
 const { resolve } = require("path");
-const { writeFile, rmdir, existsSync, mkdir } = require("fs");
+const { writeFile, rm, existsSync, mkdir } = require("fs");
 const prompt = require("prompt").start();
 
 const helperFolderpath = resolve(__dirname, "helper");
 const base_url = "https://api.github.com/users";
-const header = { Authorization: "" };
+const headers = { Authorization: "" };
 let showLog = false;
 const argsSchema = [
     {
@@ -41,22 +41,22 @@ prompt.get(argsSchema, function (err, args) {
     args.username = String(args.username).trim().replace(/ /g, "");
     args.token = args.token;
 
-    if (args.rmfiles)
-        rmdir(helperFolderpath, { recursive: true, force: true }, (e) => error(e));
+    if (args.rmfiles && existsSync(helperFolderpath))
+        rm(helperFolderpath, { recursive: true, force: true }, function (e) { error(e) });
 
     showLog = Boolean(args.log);
-    header.Authorization = args.token;
+    headers.Authorization = args.token;
 
     if (showLog) {
         console.log("results", args);
-        console.log("header", header);
+        console.log("header", headers);
     }
 
     fetchAllGists(args.username);
 });
 
 function genericFetch(url, options) {
-    return fetch(url, { header, cache: "no-cache", ...options });
+    return fetch(url, { headers, cache: "no-cache", ...options });
 }
 
 function fetchAllGists(user) {
@@ -104,14 +104,14 @@ async function getAllGistData(data) {
 
 function createFiles(data) {
     if (!existsSync(helperFolderpath))
-        mkdir(helperFolderpath, { recursive: true }, (e) => e && error(e));
+        mkdir(helperFolderpath, { recursive: true }, function (e) { e && error(e) });
 
     const list = [];
     data?.forEach((d) => {
-        writeFile(resolve(helperFolderpath, d.name), d.data, (e) => {
+        writeFile(resolve(helperFolderpath, d.name), d.data, function (e) {
             if (e) list.push({ name: d.name, status: "FAILED", description: e.message });
-            list.push({ name: d.name, status: "CREATED", description: "-" });
         });
+        list.push({ name: d.name, status: "CREATED", description: "-" });
     });
     console.table(list);
 }
