@@ -1,29 +1,41 @@
-const { resolve } = require("path");
-const { writeFile, rm, existsSync, mkdir } = require("fs");
-const prompt = require("prompt").start();
+const { resolve, basename, join } = require("path");
+const { rm, existsSync, mkdirSync, writeFileSync, readFileSync } = require("fs");
+const prompt = require("prompt").start({ noHandleSIGINT: true });
 
 const helperFolderpath = resolve(__dirname, "helper");
 const base_url = "https://api.github.com/users";
 const headers = { Authorization: "" };
 let showLog = false;
+let readJSON = true; // * Note: set this false to get the data latest from github. 
+
 const argsSchema = [
+    {
+        name: "readJSON",
+        default: readJSON,
+        type: "boolean",
+        description: "Read JSON file for Gist Contents?",
+    },
     {
         name: "username",
         type: "string",
+        default: "bhaireshm",
         required: true,
         description: "Github name",
         message: "Github name cannot be empty",
+        // when: () => { readJSON is false execute this }
     },
     {
         name: "token",
         type: "string",
+        default: "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",
         required: true,
         description: "Github token",
         message: "Github token cannot be empty",
+        // when: () => { readJSON is false execute this }
     },
     {
         name: "log",
-        default: false,
+        default: showLog,
         type: "boolean",
         description: "Enable logs?",
     },
@@ -39,7 +51,6 @@ prompt.get(argsSchema, function (err, args) {
     if (err) error(err);
 
     args.username = String(args.username).trim().replace(/ /g, "");
-    args.token = args.token;
 
     if (args.rmfiles && existsSync(helperFolderpath))
         rm(helperFolderpath, { recursive: true, force: true }, function (e) { error(e) });
@@ -55,39 +66,59 @@ prompt.get(argsSchema, function (err, args) {
     fetchAllGists(args.username);
 });
 
+process.on('SIGINT', function () {
+    console.log("This will execute when you hit CTRL+C");
+    process.exit();
+});
+
 function genericFetch(url, options) {
     return fetch(url, { headers, cache: "no-cache", ...options });
 }
 
 function fetchAllGists(user) {
-    genericFetch(`${base_url}/${user}/gists`)
-        .then((r) => r.json())
-        .then(getAllGistData)
-        .catch(error);
+    if (readJSON) {
+        const data = JSON.parse(readFileSync(join("data", "gists.json"), { encoding: "utf-8" }));
+        console.log("file: app.js:81 > fetchAllGists > data", data);
+        getAllGistData(data);
+    } else {
+        genericFetch(`${base_url}/${user}/gists`)
+            .then((r) => r.json())
+            .then(getAllGistData)
+            .catch(error);
+    }
 }
 
 async function getAllGistData(data) {
     try {
         if (showLog) console.log("data", data);
-        if (data && data.message) error(data.message);
+        if (data?.message) error(data.message);
+        let res = [];
 
-        const gistRawURL = data?.map((p) => p.url);
-        if (showLog) console.log("gistURL", gistRawURL);
+        if (readJSON) {
+            res = data;
+        } else {
+            createFiles([{ data: JSON.stringify(data), name: "gistList.json" }], resolve(__dirname, "data"));
 
-        const promises = gistRawURL?.map((url) =>
-            genericFetch(url).then((r) => r.json())
-        );
+            const gistRawURL = data?.map((p) => p.url);
+            if (showLog) console.log("gistURL", gistRawURL);
 
-        const res = await Promise.all(promises).catch(error);
-        if (showLog) console.log("res", res);
+            const promises = gistRawURL?.map((url) =>
+                genericFetch(url).then((r) => r.json())
+            );
+            res = await Promise.all(promises).catch(error);
+
+            if (showLog) console.log("res", res);
+            createFiles([{ data: JSON.stringify(res), name: "gists.json" }], resolve(__dirname, "data"));
+        }
 
         const fileData = res
             ?.filter((a) => a)
             .map((p) => {
                 return Object.keys(p.files).map((key) => {
                     return {
-                        name: p.files[key].filename,
-                        data: p.files[key].content,
+                        // name: p.files[key].filename,
+                        name: key,
+                        data: `${p.files[key].content}\n\nmodule.exports = ${basename(key).split(".")[0]};`,
                     };
                 });
             })
@@ -95,20 +126,29 @@ async function getAllGistData(data) {
 
         if (showLog) console.log("fileData", fileData);
 
+        const publishFileData = fileData.map(f => {
+            // * return `export { default * as ${basename(f.name)} } from "./src/helpers/${f.name}";`;
+            return `export * from "./src/helpers/${f.name}";`;
+        }).join("");
+
+        fileData.push({ data: JSON.stringify(publishFileData), name: 'publish.js' });
+
         // * Create all the gist files in helper folder
         createFiles(fileData);
     } catch (err) {
         error(err);
+    } finally {
+        prompt.stop();
     }
 }
 
-function createFiles(data) {
-    if (!existsSync(helperFolderpath))
-        mkdir(helperFolderpath, { recursive: true }, function (e) { e && error(e) });
+function createFiles(data, folderPath = helperFolderpath) {
+    if (!existsSync(folderPath))
+        mkdirSync(folderPath, { recursive: true }, function (e) { e && error(e) });
 
     const list = [];
     data?.forEach((d) => {
-        writeFile(resolve(helperFolderpath, d.name), d.data, function (e) {
+        writeFileSync(resolve(folderPath, d.name), d.data, function (e) {
             if (e) list.push({ name: d.name, status: "FAILED", description: e.message });
         });
         list.push({ name: d.name, status: "CREATED", description: "-" });
