@@ -27,7 +27,7 @@ const argsSchema = [
     {
         name: "token",
         type: "string",
-        default: "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",
+        default: process.env.GITHUB_TOKEN,
         required: true,
         description: "Github token",
         message: "Github token cannot be empty",
